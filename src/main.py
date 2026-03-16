@@ -83,6 +83,7 @@ def parse_date(date_value):
     
     return None
 
+
 def was_row_corrected(raw_row, parsed_row):
     """
     Compares the raw CSV row with the parsed dictionary.
