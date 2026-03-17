@@ -29,14 +29,15 @@ FALLBACK_AIR_DATE = 'Unknown'
 # --- Helper functions ------------------
 def normalize_text(text):
     """
-        Trimmed, collapsed spaces (preserves original casing, used for final output)
+        Trimmed, collapsed spaces (preserves original casing)
     """
     text = re.sub(r'\s+', ' ', str(text)).strip()
     return text
 
+
 def normalize_text_for_comparison(text):
     """
-        Normalized text for comparison (lowercase, trimmed, collapsed spaces)
+        Lowercase, trimmed, collapsed spaces.
     """
     text = normalize_text(text).lower()
     return text
@@ -45,20 +46,24 @@ def normalize_text_for_comparison(text):
 def parse_number (value):
     """
         Try to parse a number from the value, allowing for some common formatting.
-        Returns None if missing, empty, negative, or not a number.
+        Returns None if missing, empty, negative, not a number, or not a whole number.
     """
     if not value:
         return None
 
     try:
-        # This will accept cases like "1", "  1  ", "1.0", "1,000"
-        num = int(float(str(value).strip()))
+        num_float = float(str(value).strip())
         
+        if not num_float.is_integer():
+            return None
+        
+        num = int(num_float)
+
         if num < 0:
             return None
         return num
     
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -72,12 +77,12 @@ def parse_date(date_value):
     if date_value is None or str(date_value).strip() == "":
         return None
     
-    for format in DATE_FORMATS_TO_TRY:
+    for fmt in DATE_FORMATS_TO_TRY:
         try:
-            parsed_date = datetime.strptime(str(date_value).strip(), format)
+            parsed_date = datetime.strptime(str(date_value).strip(), fmt)
             # If parsing is successful, return the date in normalized format
             return parsed_date.strftime(NORMALIZE_DATE_FORMAT)
-        except ValueError:
+        except (ValueError, TypeError):
             # If parsing fails, try the next format
             continue
     
@@ -86,9 +91,9 @@ def parse_date(date_value):
 
 def was_row_corrected(raw_row, parsed_row):
     """
-    Compares the raw CSV row with the parsed dictionary.
-    If any value was reformatted, stripped of spaces, or replaced by a fallback,
-    it means the row was 'corrected'.
+        Compares the raw CSV row with the parsed dictionary.
+        If any value was reformatted, stripped of spaces, or replaced by a fallback,
+        it means the row was 'corrected'.
     """
     # 1. Check strings (Title and Series Name)
     # If the original didn't exist, or had extra spaces that got removed:
@@ -168,10 +173,10 @@ def clean_record(row):
 
 def generate_deduplication_keys(episode):
     """
-    Generate the possible deduplication keys for an episode.
-    A key is a tuple of values that is used to identify a episode.
-    We generate multiple keys for each episode to allow for different types of duplicates to be detected.
-    If two episodes share at least one of these keys, they are considered duplicates and only one of them should be kept.
+        Generate the possible deduplication keys for an episode.
+        A key is a tuple of values that is used to identify a episode.
+        We generate multiple keys for each episode to allow for different types of duplicates to be detected.
+        If two episodes share at least one of these keys, they are considered duplicates and only one of them should be kept.
     """
     keys = []
 
@@ -196,13 +201,12 @@ def generate_deduplication_keys(episode):
     if season_number != FALLBACK_SEASON_NUMBER and episode_title != fallback_title_norm:
         keys.append((series_name, season_number, 0, episode_title))
 
-    # It could happen that it returns an empty array [], if the record is very broken
     return keys
 
 
 def get_best_episode(existing, new):
     """
-        Given two episodes that are considered duplicates, decide which one to keep following this priority:
+        Given two episodes (existing and new) that are considered duplicates, decide which one to keep following this priority:
             1. Episodes with a valid Air Date over "Unknown" 
             2. Episodes with a known Episode Title over "Untitled Episode" 
             3. Episodes with a valid Season Number and Episode Number 
@@ -255,7 +259,7 @@ def sort_episodes(episodes):
 
 def generate_quality_report(input_records, output_records, discarded, corrected, duplicates):
     """
-    Generates a markdown report assessing data quality and the deduplication strategy.
+        Generates a markdown report assessing data quality and the deduplication strategy.
     """
     with open(REPORT_FILE, 'w', encoding='utf-8') as f:
         f.write("# Data Quality Report\n\n")
@@ -289,39 +293,50 @@ def generate_quality_report(input_records, output_records, discarded, corrected,
         f.write("- **Dates in valid formats** were normalized to `YYYY-MM-DD` for consistency.\n")
         f.write("- **Extra whitespace** in text fields was trimmed and collapsed.\n\n")
 
-        f.write("Once the 'garbage' rows are removed and the remaining data is corrected and normalized, ")
-        f.write("we obtain a clean, parsed dataset ready for processing. \n\n")
+        f.write("Once the invalid rows are removed and the remaining data is corrected and normalized, ")
+        f.write("we obtain a clean, parsed dataset of episodes ready for processing. \n\n")
 
         f.write("## Deduplication strategy\n\n")
-        f.write("The same episode could appear multiple times in the file, sometimes with slightly different data. ")
-        f.write("To detect duplicates, I generate up to 3 different keys per episode:\n\n")
-        f.write("1. `(SeriesName, SeasonNumber, EpisodeNumber)` - used when both season and episode number are known.\n")
-        f.write("2. `(SeriesName, 0, EpisodeNumber, EpisodeTitle)` - used when the season is unknown but we have a number and a title.\n")
-        f.write("3. `(SeriesName, SeasonNumber, 0, EpisodeTitle)` - used when the episode number is unknown but we have a season and a title.\n\n")
         
-        f.write("Keys with fallback values (`0` or `\"Untitled Episode\"`) are skipped, since they don't carry real identifying information and could cause **False Positives**.\n\n")
-       
-        f.write("We can say that if two episodes share at least one key, they are considered the same episode. \n")
-        f.write("To keep track of this, I use a dictionary that maps each key to the best episode found so far for that group. ")
-        f.write("When a new episode arrives, I check if any of its keys already exist in the dictionary. ")
-        f.write("If they do, the two records are considered the same episode and I resolve the conflict by keeping only the best one, following this priority:\n\n")
+        f.write("The same episode could appear multiple times in the file, sometimes with slightly different data. To detect duplicates, up to 3 different keys are generated per episode:\n\n")
+        
+        f.write("1. `(SeriesName, SeasonNumber, EpisodeNumber)`\n")
+        f.write("2. `(SeriesName, 0, EpisodeNumber, EpisodeTitle)`\n")
+        f.write("3. `(SeriesName, SeasonNumber, 0, EpisodeTitle)`\n\n")
+                
+        f.write("Keys with fallback values for any of those fields (like `0` or `\"Untitled Episode\"`) are skipped, since they don't carry real identifying information and could cause **false positives**.\n\n")
+        
+        f.write("To keep track of unique records and efficiently resolve duplicates, a memory catalog is implemented using a Python dictionary. This catalog maps each unique key to the best version of an episode found so far.\n\n")
+        
+        f.write("The process works by iterating through the array of parsed episodes. For each episode, its corresponding keys are generated and checked to see if any of them already exist in the catalog:\n\n")
+        
+        f.write("* **If no keys exist in the catalog:** The episode is considered new. Its keys are added to the dictionary, pointing to this current episode.\n")
+        f.write("* **If at least one key already exists:** A duplicate is detected (in other words, if two episodes share at least one key, we can say that they represent the same episode).\n\n")
+        
+        f.write("When a duplication is detected, the current episode is compared against the existing episode in the catalog to determine which one is the \"best\" version to keep, discarding the other. To resolve this conflict, the following priority cascade is applied:\n\n")
+        
         f.write("1. Prefer the record with a **known Air Date**.\n")
         f.write("2. Prefer the record with a **real Episode Title**.\n")
         f.write("3. Prefer the record with **both Season and Episode numbers** set.\n")
         f.write("4. If everything is equal, keep the **first one found** in the file.\n\n")
         
-        f.write("# Transitive duplicate detection\n\n")
-        f.write("An important edge case is when two records don't share a key directly, but are both duplicates of a third one.\n\n")
-        f.write("For example:\n\n")
-        f.write("- Record A and Record B share Key 1 → they are duplicates.\n")
-        f.write("- Record B and Record C share Key 3 → they are also duplicates.\n")
-        f.write("- Therefore, A, B and C are all the same episode, even though A and C share no key.\n\n")
-        f.write("To handle this, every time a duplicate is found, **all keys from both records are registered in the catalog pointing to the same winning episode**. ")
-        f.write("This way, if any future record shares a key with any of them, it will be correctly compared against the current winner.\n\n")
-
+        f.write("Finally, after the winner is decided, the catalog is updated. All valid keys from both the current and the previous episode are linked to the winning record, keeping the catalog unified and up-to-date.\n\n")
+        f.write("This last strategy of linking keys from both records enables a transitive property: if a future row shares keys only with the discarded record, it will still be correctly identified as a duplicate of the winner, even without a direct key match.\n\n")
+        
 
 # --- Main processing function ------------------
 def main():
+    """
+        Main data processing pipeline.
+
+        Steps:
+        1. Validate input file and output directory
+        2. Read and clean input CSV records
+        3. Deduplicate episodes using multiple matching keys
+        4. Sort the resulting episodes
+        5. Write cleaned data to output CSV
+        6. Generate a quality report with processing statistics
+    """
 
     # Ensure input file exists
     if not os.path.isfile(INPUT_FILE):
@@ -336,40 +351,72 @@ def main():
 
     # ---- Variables for reporting ----
     input_records = 0
-    discarded_entries = 0
-    corrected_entries = 0
-    duplicates_detected = 0
+    output_records = 0
+    discarded_entries_count = 0
+    corrected_entries_count = 0
+    duplicates_detected_count = 0
     # ----------------------------------
 
     parsed_episodes = []
-    episodes_seen_by_key = {} 
-
+    episodes_seen_by_key = {} # catalog for deduplication: key -> episode
     unique_episodes = []
 
-
     # 1. Read and clean the input CSV
-    with open(INPUT_FILE, 'r', encoding='utf-8') as infile:
-        reader = csv.DictReader(infile)
+    try:
+        with open(INPUT_FILE, 'r', encoding='utf-8') as infile:
+            reader = csv.DictReader(infile)
 
-        for row in reader:
-            # 1. Count total input records
-            input_records += 1
+            # Validate empty file
+            if not reader.fieldnames:
+                print("Error: Input CSV appears to be empty.")
+                return
+
+            # Validate required columns
+            required_fields = {
+                "Series Name",
+                "Season Number",
+                "Episode Number",
+                "Episode Title",
+                "Air Date"
+            }
+            if not required_fields.issubset(reader.fieldnames):
+                print("Error: Input CSV missing required columns.")
+                print(f"Required columns: {required_fields}")
+                print(f"Found columns: {reader.fieldnames}")
+                return
             
-            parsed_row = clean_record(row)
-            if not parsed_row:
-                discarded_entries += 1
-                continue
+            # Process each row in the CSV
+            for row in reader:
+                # Count total input records
+                input_records += 1
+                parsed_row = clean_record(row)
 
-            # Count corrected entries (fields that were missing/invalid and replaced with fallback values)
-            if was_row_corrected(row, parsed_row):
-                corrected_entries += 1
+                # Count discarded entries (those that returned None from clean_record)
+                if not parsed_row:
+                    discarded_entries_count += 1
+                    continue
 
-            parsed_episodes.append(parsed_row)
-        
+                # Count corrected entries (based on comparison between raw row and parsed row)
+                if was_row_corrected(row, parsed_row):
+                    corrected_entries_count += 1
 
+                parsed_episodes.append(parsed_row)
+
+    except Exception as e:
+        print(f"Error while reading input file: {e}")
+        return
+    
+    
     # 2. Deduplicate parsed episodes
     for episode in parsed_episodes:
         keys = generate_deduplication_keys(episode)
+
+        # Some episodes may not generate any keys if they are missing too much information,
+        # but we still want to keep them as they passed the discard rules.
+        # (in this exercise, the only possible case is an episode with only a series name and a valid air date)
+        if not keys:
+            unique_episodes.append(episode)
+            continue
 
         # Check if any of the keys exist in episodes_seen_by_key, if so, we have a duplicate
         existing_episode = None
@@ -379,16 +426,20 @@ def main():
                 break
 
         if existing_episode:
-            duplicates_detected += 1
-            # We have a duplicate, decide which one to keep
+            # We have a duplicate. We need to decide which one to keep.
+            duplicates_detected_count += 1
             best_episode = get_best_episode(existing_episode, episode)
-
-            # Get keys of both episodes
-            existing_keys = generate_deduplication_keys(existing_episode)
-
-            # Update all keys to point to the best episode 
-            # (we want all keys of both episodes to point to the same best episode, so that future duplicates will be compared with the best one)
-            for key in existing_keys + keys:
+            
+            # If the winner is the new episode, 
+            #  we need to update the catalog to point all keys that were pointing to the existing episode
+            #  to now point to the best episode.
+            if best_episode is not existing_episode:       
+                for k in list(episodes_seen_by_key.keys()):
+                    if episodes_seen_by_key[k] is existing_episode:
+                        episodes_seen_by_key[k] = best_episode
+            
+            # Map the current episode's keys to the winner in the catalog.
+            for key in keys:
                 episodes_seen_by_key[key] = best_episode
 
         else:
@@ -411,22 +462,36 @@ def main():
     
 
     # 5. Write cleaned data to output CSV
-    with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='') as outfile:
-        fieldnames = ["SeriesName", "SeasonNumber", "EpisodeNumber", "EpisodeTitle", "AirDate"]
-        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for episode in unique_episodes:
-            writer.writerow(episode)
+    try:
+        with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='') as outfile:
+            fieldnames = [
+                "SeriesName",
+                "SeasonNumber",
+                "EpisodeNumber",
+                "EpisodeTitle",
+                "AirDate"
+            ]
+
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for episode in unique_episodes:
+                writer.writerow(episode)
+
+    except Exception as e:
+        print(f"Error while writing output file: {e}")
+        return
 
 
     # 6. Generate quality report
     generate_quality_report(
         input_records,
         output_records,
-        discarded_entries,
-        corrected_entries,
-        duplicates_detected
+        discarded_entries_count,
+        corrected_entries_count,
+        duplicates_detected_count
     )
+
 
     print(f"Done! {output_records} episodes written to {OUTPUT_FILE}")
     print(f"Report saved to {REPORT_FILE}")
